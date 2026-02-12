@@ -268,9 +268,9 @@ class Api:
                     WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
                     user32.EnumWindows(WNDENUMPROC(enum_cb), 0)
                     if cursor_hwnd:
-                        user32.ShowWindow(cursor_hwnd, SW_RESTORE)
-                        user32.SetForegroundWindow(cursor_hwnd)
+                        # 直接最大化，避免先恢复再最大化导致的闪烁
                         user32.ShowWindow(cursor_hwnd, SW_MAXIMIZE)
+                        user32.SetForegroundWindow(cursor_hwnd)
                         return
                 except Exception:
                     pass

@@ -111,11 +111,8 @@ function go(path) {
 }
 
 function openApiModal() {
-  router.push('/api-one-click')
-  setTimeout(() => {
-    const event = new CustomEvent('open-api-one-click-modal')
-    window.dispatchEvent(event)
-  }, 100)
+  const event = new CustomEvent('open-api-one-click-modal')
+  window.dispatchEvent(event)
 }
 
 onMounted(() => {
