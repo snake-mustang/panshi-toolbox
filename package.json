@@ -1,0 +1,7 @@
+{
+  "name": "app-toolbox",
+  "private": true,
+  "scripts": {
+    "dev": "npx serve static -l 5173"
+  }
+}

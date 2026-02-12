@@ -1,0 +1,4 @@
+# 黄同学的AI工具箱 - 核心依赖（Python 3.8~3.13 均可安装）
+# 打包带 OCR：请用 Python 3.11 或 3.12，再执行 pip install -r requirements-ocr.txt 后打包
+pywebview>=4.0
+Pillow>=10.0.0

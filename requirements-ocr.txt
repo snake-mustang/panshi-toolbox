@@ -1,0 +1,3 @@
+# OCR 依赖（仅 Python 3.6~3.12）。打包 exe 时用 3.11/3.12 执行此文件，打好的 exe 自带 OCR
+numpy>=1.20.0
+rapidocr-onnxruntime>=1.3.0
