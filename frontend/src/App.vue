@@ -32,8 +32,7 @@
     </div>
     <div class="console-wrap">
       <div class="console-actions">
-        <button type="button" class="console-toggle" @click="consoleOpen = !consoleOpen" title="点击展开/收起">📋 日志</button>
-        <button type="button" class="console-copy" @click="copyLogs" title="复制全部日志">复制日志</button>
+        <button type="button" class="console-toggle" @click="consoleOpen = !consoleOpen" title="点击展开/收起">📋</button>
       </div>
       <div class="console" :class="{ open: consoleOpen }" ref="consoleEl">
         <div v-for="(line, i) in logLines" :key="i" class="line">{{ line }}</div>

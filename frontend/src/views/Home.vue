@@ -44,19 +44,14 @@
         <p>从 APIFOX 复制 OpenAPI/Swagger，生成规则并复制到剪贴板，在 Cursor Agent 中粘贴即可快速生成前端接口。</p>
         <div class="card-footer"><button type="button" class="btn" aria-label="一键应用">一键应用</button></div>
       </div>
-      <div class="card" @click="go('/screenshot')">
-        <div class="card-head"><h3>长截图</h3><span class="card-by">--by: 黄通</span></div>
-        <p>框选区域后手动滚动内容，自动拼接成长图（PixPin 式）</p>
-        <div class="card-footer"><button type="button" class="btn" aria-label="打开">打开</button></div>
-      </div>
       <div class="card" @click="go('/ocr')">
         <div class="card-head"><h3>截图识字</h3><span class="card-by">--by: 黄通</span></div>
-        <p>先全屏截图，再识别图中的文字</p>
+        <p>框选区域截图，自动识别图中文字并复制到剪贴板</p>
         <div class="card-footer"><button type="button" class="btn" aria-label="打开">打开</button></div>
       </div>
       <div class="card placeholder">
-        <div class="card-head"><h3>批量添加图片水印</h3><span class="card-by">--by: 黄通</span></div>
-        <p>为多张图片批量添加文字或图片水印</p>
+        <div class="card-head"><h3>批量添加水印</h3><span class="card-by">--by: 黄通</span></div>
+        <p>为多张图片/多个视频批量添加文字水印</p>
         <div class="card-footer"><button type="button" class="btn">已完成，待接入</button></div>
       </div>
       <div class="card placeholder">
@@ -74,6 +69,7 @@ import { useRouter } from 'vue-router'
 
 const router = useRouter()
 const log = inject('log')
+const getApi = inject('getApi')
 const usageCount = ref(0)
 
 const QS_BASE = 'https://pre-qs-api.shiyue.com/api/curd'

@@ -5,9 +5,13 @@ pywebview 暴露给前端的 API：截图、裁剪、OCR、日志。
 """
 import base64
 import io
+import os
 import sys
 import time
 import threading
+import json
+import urllib.request
+import urllib.error
 
 from PIL import Image, ImageGrab
 
@@ -39,42 +43,73 @@ def _pil_to_data_url(img: Image.Image) -> str:
 
 
 def _set_clipboard_image(img: Image.Image) -> bool:
-    """将 PIL 图像写入系统剪贴板（仅 Windows，CF_DIB）。返回是否成功。"""
+    """将 PIL 图像写入系统剪贴板（Windows 使用 pywin32）。返回是否成功。"""
     if sys.platform != "win32":
         return False
+    
     try:
-        buf = io.BytesIO()
-        img.convert("RGB").save(buf, format="BMP")
-        bmp_data = buf.getvalue()
-        # CF_DIB 需要的是 DIB 数据（去掉 BMP 文件头 14 字节）
-        dib = bmp_data[14:]
-        import ctypes
-        from ctypes import wintypes
-        kernel32 = ctypes.windll.kernel32
-        user32 = ctypes.windll.user32
-        GMEM_MOVEABLE = 0x0002
-        CF_DIB = 8
-        n = len(dib)
-        h = kernel32.GlobalAlloc(GMEM_MOVEABLE, n)
-        if not h:
+        import win32clipboard
+        from io import BytesIO
+        
+        # 确保是RGB模式
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        
+        # 转换为BMP格式
+        output = BytesIO()
+        img.save(output, "BMP")
+        data = output.getvalue()[14:]  # 去掉BMP文件头（14字节）
+        
+        # 尝试打开剪贴板（重试机制）
+        for attempt in range(5):
+            try:
+                win32clipboard.OpenClipboard()
+                win32clipboard.EmptyClipboard()
+                win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
+                win32clipboard.CloseClipboard()
+                return True
+            except Exception as e:
+                try:
+                    win32clipboard.CloseClipboard()
+                except:
+                    pass
+                if attempt < 4:
+                    time.sleep(0.15)
+                else:
+                    print(f"剪贴板复制失败: {e}")
+                    return False
+        
+        return False
+        
+    except ImportError:
+        # 如果没有 pywin32，尝试使用 PIL 的内置方法
+        try:
+            import subprocess
+            # 保存临时文件
+            temp_path = os.path.join(os.getenv('TEMP', '.'), 'temp_screenshot.png')
+            img.save(temp_path, 'PNG')
+            # 使用 PowerShell 复制图片到剪贴板
+            ps_script = f'''
+            Add-Type -AssemblyName System.Windows.Forms
+            $img = [System.Drawing.Image]::FromFile("{temp_path}")
+            [System.Windows.Forms.Clipboard]::SetImage($img)
+            $img.Dispose()
+            '''
+            subprocess.run(['powershell', '-Command', ps_script], 
+                          capture_output=True, timeout=5)
+            try:
+                os.remove(temp_path)
+            except:
+                pass
+            return True
+        except Exception as e:
+            print(f"备用剪贴板方法失败: {e}")
             return False
-        ptr = kernel32.GlobalLock(h)
-        if not ptr:
-            kernel32.GlobalFree(h)
-            return False
-        ctypes.memmove(ptr, dib, n)
-        kernel32.GlobalUnlock(h)
-        if not user32.OpenClipboard(None):
-            kernel32.GlobalFree(h)
-            return False
-        user32.EmptyClipboard()
-        ok = user32.SetClipboardData(CF_DIB, h)
-        user32.CloseClipboard()
-        if not ok:
-            kernel32.GlobalFree(h)
-            return False
-        return True
-    except Exception:
+    
+    except Exception as e:
+        import traceback
+        print(f"剪贴板错误: {e}")
+        traceback.print_exc()
         return False
 
 
@@ -140,6 +175,33 @@ class Api:
         self._on_log("区域截图完成" if data_url else "区域截图已取消")
         return data_url
 
+    def capture_fullscreen_for_ocr(self) -> str:
+        """
+        全屏识别：直接截取当前全屏（隐藏工具箱后），返回 data URL。
+        """
+        if self._window:
+            try:
+                self._window.hide()
+            except Exception:
+                pass
+            time.sleep(0.35)
+        
+        data_url = ""
+        try:
+            img = ImageGrab.grab()
+            data_url = _pil_to_data_url(img)
+            self._on_log("全屏截图完成")
+        except Exception as e:
+            self._on_log(f"[全屏截图错误] {e}")
+        finally:
+            if self._window:
+                try:
+                    self._window.show()
+                except Exception:
+                    pass
+        
+        return data_url
+
     def capture_long_screenshot(self) -> str:
         """
         长截图（PixPin 式）：先隐藏工具箱，用户框选区域，再由用户手动滚动内容，
@@ -155,7 +217,7 @@ class Api:
         data_url = ""
         try:
             from backend.region_capture_tk import run_region_capture_with_rect
-            from backend.long_screenshot import capture_long_screenshot_manual
+            from backend.long_screenshot_opencv import capture_long_screenshot_manual
             region_data_url, rect = run_region_capture_with_rect()
             if rect is None:
                 self._on_log("已取消选区")
@@ -163,7 +225,7 @@ class Api:
                 self._on_log("选区已定，请手动滚动内容，完成后点击「完成」")
                 stop_event = threading.Event()
                 result_holder = [None]
-                current_result_holder = [None]
+                current_result_holder = [None, None]  # [预览图像, 匹配状态]
                 done_action = [None]  # "done" | "cancel"
 
                 def run_capture():
@@ -174,7 +236,7 @@ class Api:
 
                 cap_thread = threading.Thread(target=run_capture, daemon=True)
                 cap_thread.start()
-                from backend.long_screenshot_ui import run_long_screenshot_ui
+                from backend.long_screenshot_ui_modern import run_long_screenshot_ui
                 run_long_screenshot_ui(
                     rect, stop_event, result_holder, current_result_holder, done_action
                 )
@@ -182,10 +244,19 @@ class Api:
                 if done_action[0] == "done" and result_holder[0] is not None:
                     img = result_holder[0]
                     data_url = _pil_to_data_url(img)
-                    if _set_clipboard_image(img):
+                    
+                    # 多次尝试复制到剪贴板
+                    copy_success = False
+                    for attempt in range(3):
+                        if _set_clipboard_image(img):
+                            copy_success = True
+                            break
+                        time.sleep(0.1)
+                    
+                    if copy_success:
                         self._on_log("长截图已复制到剪贴板，可直接 Ctrl+V 粘贴")
                     else:
-                        self._on_log("长截图完成，但复制到剪贴板失败")
+                        self._on_log("长截图完成，但复制到剪贴板失败（可能被其他程序占用）")
                 elif done_action[0] == "cancel":
                     self._on_log("已取消长截图")
         except Exception as e:
@@ -392,3 +463,124 @@ class Api:
         except Exception as e:
             self._on_log(f"[剪贴板] {e}")
             return False
+
+    def analyze_text_with_ai_stream(self, text: str, prompt: str = "") -> dict:
+        """
+        使用 Qwen3 AI 分析文本（流式输出）。
+        
+        Args:
+            text: 要分析的文本（OCR 识别结果）
+            prompt: 用户自定义提示词
+        
+        Returns:
+            dict: {"status": "success/error", "content": "结果", "chunks": [...]}
+        """
+        if not text:
+            return {"status": "error", "content": "没有可分析的文本"}
+        
+        # Qwen3 配置
+        QWEN3_URL = "http://1318411781707473.cn-shanghai.pai-eas.aliyuncs.com/api/predict/xuchuan_qwen3_coder/v1/chat/completions"
+        QWEN3_API_KEY = "MDA2ZWZiOGE4MGM3MTEzYmEwYzg3YTQ1YjBhYWFjMGVlMTg0NTNlZg=="
+        QWEN3_MODEL = "Qwen3-Coder-480B-A35B-Instruct-PAI-optimized"
+        
+        try:
+            # 构建消息
+            system_message = "你是一个专业的文本分析助手，请根据用户的要求分析下面的文本内容。"
+            
+            if prompt:
+                user_message = f"用户要求：{prompt}\n\n文本内容：\n{text}"
+            else:
+                user_message = f"请分析以下文本内容：\n{text}"
+            
+            # 构建请求数据（启用流式输出）
+            data = {
+                "model": QWEN3_MODEL,
+                "messages": [
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": user_message}
+                ],
+                "temperature": 0.7,
+                "max_tokens": 2000,
+                "stream": True  # 启用流式输出
+            }
+            
+            # 发送请求
+            req = urllib.request.Request(
+                QWEN3_URL,
+                data=json.dumps(data).encode('utf-8'),
+                headers={
+                    'Content-Type': 'application/json',
+                    'Authorization': f'Bearer {QWEN3_API_KEY}'
+                }
+            )
+            
+            self._on_log("正在请求 Qwen3 AI 分析（流式）...")
+            
+            full_content = ""
+            chunks = []
+            
+            with urllib.request.urlopen(req, timeout=120) as response:
+                # 读取流式数据
+                for line in response:
+                    line = line.decode('utf-8').strip()
+                    if not line or line == "data: [DONE]":
+                        continue
+                    
+                    if line.startswith("data: "):
+                        line = line[6:]  # 去掉 "data: " 前缀
+                        
+                        try:
+                            chunk_data = json.loads(line)
+                            if 'choices' in chunk_data and len(chunk_data['choices']) > 0:
+                                delta = chunk_data['choices'][0].get('delta', {})
+                                content = delta.get('content', '')
+                                if content:
+                                    full_content += content
+                                    chunks.append(content)
+                        except json.JSONDecodeError:
+                            continue
+                
+                if full_content:
+                    self._on_log("AI 分析完成")
+                    return {
+                        "status": "success",
+                        "content": full_content,
+                        "chunks": chunks
+                    }
+                else:
+                    return {
+                        "status": "error",
+                        "content": "AI 返回了空结果"
+                    }
+        
+        except urllib.error.HTTPError as e:
+            error_msg = f"HTTP 错误 {e.code}"
+            try:
+                error_detail = e.read().decode('utf-8')
+                self._on_log(f"[AI 分析错误] {error_msg}: {error_detail}")
+                return {
+                    "status": "error",
+                    "content": f"请求失败：{error_msg}\n{error_detail}"
+                }
+            except:
+                self._on_log(f"[AI 分析错误] {error_msg}")
+                return {
+                    "status": "error",
+                    "content": f"请求失败：{error_msg}"
+                }
+        
+        except urllib.error.URLError as e:
+            error_msg = f"网络错误: {e.reason}"
+            self._on_log(f"[AI 分析错误] {error_msg}")
+            return {
+                "status": "error",
+                "content": f"网络连接失败：{error_msg}"
+            }
+        
+        except Exception as e:
+            error_msg = str(e)
+            self._on_log(f"[AI 分析错误] {error_msg}")
+            return {
+                "status": "error",
+                "content": f"分析失败：{error_msg}"
+            }
